@@ -1,149 +1,203 @@
-from django.db import models
-from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator, EmailValidator
-from django.utils import timezone
-from django.db.models import JSONField
+from sqlalchemy import Column, Integer, String, Date, DateTime, Text, ForeignKey, Boolean, JSON, DECIMAL
+from sqlalchemy.orm import relationship
+from config.database import Base
+from datetime import datetime
 
 # ========== PATIENT ==========
-class Patient(models.Model):
-    name = models.CharField(max_length=100)
-    dob = models.DateField()
-    email = models.EmailField(validators=[EmailValidator()])
-    phone = models.CharField(max_length=15, validators=[RegexValidator(r'^\d{10,15}$')])
-    gender = models.CharField(max_length=10)
-    about = models.TextField(blank=True)
-    emergency_contact = models.CharField(max_length=15)
-    medicalRecordNo = models.CharField(max_length=50, unique=True)
-    address = models.TextField()
-    doctor = models.ForeignKey('Doctor', on_delete=models.SET_NULL, null=True, related_name='patients')
+class Patient(Base):
+    __tablename__ = "patients"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100))
+    dob = Column(Date)
+    email = Column(String(100), unique=True)
+    phone = Column(String(15))
+    gender = Column(String(10))
+    about = Column(Text, nullable=True)
+    emergency_contact = Column(String(15))
+    medicalRecordNo = Column(String(50), unique=True)
+    address = Column(Text)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
+
+    doctor = relationship("Doctor", back_populates="patients")
 
 # ========== DOCTOR ==========
-class Doctor(models.Model):
-    name = models.CharField(max_length=100)
-    specialty = models.CharField(max_length=100)
-    contact = models.CharField(max_length=15)
-    profilePhoto = models.ImageField(upload_to='doctor_photos/', blank=True, null=True)
-    about = models.TextField(blank=True)
-    experience = JSONField()  # e.g., {"years": 5, "fields": ["cardiology", "surgery"]}
-    email = models.EmailField(unique=True)
-    address = models.TextField()
-    available = models.BooleanField(default=True)
+class Doctor(Base):
+    __tablename__ = "doctors"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100))
+    specialty = Column(String(100))
+    contact = Column(String(15))
+    profilePhoto = Column(String, nullable=True)
+    about = Column(Text, nullable=True)
+    experience = Column(JSON)
+    email = Column(String(100), unique=True)
+    address = Column(Text)
+    available = Column(Boolean, default=True)
+
+    patients = relationship("Patient", back_populates="doctor")
+    appointments = relationship("Appointment", back_populates="doctor")
+    treatments = relationship("Treatment", secondary="treatment_doctor_association", back_populates="doctors")
 
 # ========== APPOINTMENT ==========
-class Appointment(models.Model):
-    scheduledAt = models.DateTimeField()
-    status = models.CharField(max_length=50)
-    notes = models.TextField(blank=True)
-    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE)
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
+class Appointment(Base):
+    __tablename__ = "appointments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    scheduledAt = Column(DateTime)
+    status = Column(String(50))
+    notes = Column(Text)
+
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
+    patient_id = Column(Integer, ForeignKey("patients.id"))
+
+    doctor = relationship("Doctor", back_populates="appointments")
+    patient = relationship("Patient")
+    treatments = relationship("Treatment", back_populates="appointment")
 
 # ========== SURGERY PERFORMED ==========
-class SurgeryPerformed(models.Model):
-    surgeryType = models.CharField(max_length=100)
-    performedAt = models.DateTimeField()
-    room = models.CharField(max_length=50)
-    notes = models.TextField(blank=True)
-    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE)
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
+class SurgeryPerformed(Base):
+    __tablename__ = "surgeries_performed"
+
+    id = Column(Integer, primary_key=True)
+    surgeryType = Column(String(100))
+    performedAt = Column(DateTime)
+    room = Column(String(50))
+    notes = Column(Text, nullable=True)
+
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
+    patient_id = Column(Integer, ForeignKey("patients.id"))
 
 # ========== SURGERY SCHEDULE ==========
-class SurgerySchedule(models.Model):
-    surgeryType = models.CharField(max_length=100)
-    scheduledAt = models.DateTimeField()
-    room = models.CharField(max_length=50)
-    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE)
+class SurgerySchedule(Base):
+    __tablename__ = "surgery_schedules"
+
+    id = Column(Integer, primary_key=True)
+    surgeryType = Column(String(100))
+    scheduledAt = Column(DateTime)
+    room = Column(String(50))
+
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
 
 # ========== TREATMENT ==========
-class Treatment(models.Model):
-    treatmentType = models.CharField(max_length=100)
-    about = models.TextField()
-    category = models.CharField(max_length=100)  # ✅ newly added
-    date = models.DateTimeField(default=timezone.now)
+from sqlalchemy import Table
 
-    appointment = models.ForeignKey(
-        'Appointment',
-        on_delete=models.CASCADE,
-        related_name="treatments"
-    )
+# Association table for many-to-many between Treatment and Doctor
+treatment_doctor_association = Table(
+    "treatment_doctor_association",
+    Base.metadata,
+    Column("treatment_id", Integer, ForeignKey("treatments.id")),
+    Column("doctor_id", Integer, ForeignKey("doctors.id"))
+)
 
-    patient = models.ForeignKey(
-        'Patient',
-        on_delete=models.CASCADE
-    )
+class Treatment(Base):
+    __tablename__ = "treatments"
 
-    doctors = models.ManyToManyField(
-        'Doctor',
-        related_name="treatments"
-    )
+    id = Column(Integer, primary_key=True)
+    treatmentType = Column(String(100))
+    about = Column(Text)
+    category = Column(String(100))
+    date = Column(DateTime, default=datetime.utcnow)
 
-    def __str__(self):
-        return f"{self.treatmentType} - {self.patient}"
+    appointment_id = Column(Integer, ForeignKey("appointments.id"))
+    patient_id = Column(Integer, ForeignKey("patients.id"))
+
+    appointment = relationship("Appointment", back_populates="treatments")
+    patient = relationship("Patient")
+    doctors = relationship("Doctor", secondary=treatment_doctor_association, back_populates="treatments")
 
 # ========== REVIEW ==========
-class Review(models.Model):
-    rating = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
-    comment = models.TextField(blank=True)
-    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE)
-    treatment = models.ForeignKey(Treatment, on_delete=models.SET_NULL, null=True)
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
-    createdAt = models.DateTimeField(auto_now_add=True)
+class Review(Base):
+    __tablename__ = "reviews"
+
+    id = Column(Integer, primary_key=True)
+    rating = Column(Integer)
+    comment = Column(Text, nullable=True)
+
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
+    treatment_id = Column(Integer, ForeignKey("treatments.id"))
+    patient_id = Column(Integer, ForeignKey("patients.id"))
+
+    createdAt = Column(DateTime, default=datetime.utcnow)
 
 # ========== PAYMENT ==========
-class Payment(models.Model):
-    amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
-    paidAt = models.DateTimeField()
-    method = models.CharField(max_length=50)
-    status = models.CharField(max_length=50)
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
-    treatment = models.ForeignKey(Treatment, on_delete=models.SET_NULL, null=True)
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id = Column(Integer, primary_key=True)
+    amount = Column(DECIMAL(10, 2))
+    paidAt = Column(DateTime)
+    method = Column(String(50))
+    status = Column(String(50))
+
+    patient_id = Column(Integer, ForeignKey("patients.id"))
+    treatment_id = Column(Integer, ForeignKey("treatments.id"), nullable=True)
 
 # ========== MESSAGE ==========
-class Message(models.Model):
-    content = models.TextField()
-    sentAt = models.DateTimeField(auto_now_add=True)
-    status = models.CharField(max_length=50)
-    senderType = models.CharField(max_length=20)
-    senderId = models.IntegerField()
-    receiverType = models.CharField(max_length=20)
-    receiverId = models.IntegerField()
+class Message(Base):
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True)
+    content = Column(Text)
+    sentAt = Column(DateTime, default=datetime.utcnow)
+    status = Column(String(50))
+    senderType = Column(String(20))
+    senderId = Column(Integer)
+    receiverType = Column(String(20))
+    receiverId = Column(Integer)
 
 # ========== ADMIN USER ==========
-class AdminUser(models.Model):
-    name = models.CharField(max_length=100)
-    email = models.EmailField(unique=True)
-    role = models.CharField(max_length=50)
-    passwordHash = models.CharField(max_length=255)
+class AdminUser(Base):
+    __tablename__ = "admin_users"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100))
+    email = Column(String(100), unique=True)
+    role = Column(String(50))
+    passwordHash = Column(String(255))
 
 # ========== MEDICATION ==========
-class Medication(models.Model):
-    name = models.CharField(max_length=100)
-    dosage = models.CharField(max_length=50)
-    alergy = JSONField()
-    frequency = models.CharField(max_length=50)
-    prescribedAt = models.DateTimeField()
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
-    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE)
+class Medication(Base):
+    __tablename__ = "medications"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100))
+    dosage = Column(String(50))
+    alergy = Column(JSON)
+    frequency = Column(String(50))
+    prescribedAt = Column(DateTime)
+
+    patient_id = Column(Integer, ForeignKey("patients.id"))
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
 
 # ========== HEALTH REPORT ==========
-class HealthReport(models.Model):
-    reportType = models.CharField(max_length=100)
-    description = models.TextField(blank=True)
-    filePath = models.FileField(upload_to='health_reports/')
-    uploadedAt = models.DateTimeField(auto_now_add=True)
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
-    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE)
+class HealthReport(Base):
+    __tablename__ = "health_reports"
 
-class VitalStat(models.Model):
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='vital_stats')
-    doctor = models.ForeignKey(Doctor, on_delete=models.SET_NULL, null=True, blank=True)
-    appointment = models.ForeignKey(Appointment, on_delete=models.SET_NULL, null=True, blank=True)
+    id = Column(Integer, primary_key=True)
+    reportType = Column(String(100))
+    description = Column(Text, nullable=True)
+    filePath = Column(String)
+    uploadedAt = Column(DateTime, default=datetime.utcnow)
 
-    temperature = models.FloatField(help_text="Body temperature in Celsius")
-    heart_rate = models.IntegerField(help_text="Beats per minute")
-    blood_pressure_systolic = models.IntegerField(help_text="Systolic BP")
-    blood_pressure_diastolic = models.IntegerField(help_text="Diastolic BP")
-    respiratory_rate = models.IntegerField(help_text="Breaths per minute")
+    patient_id = Column(Integer, ForeignKey("patients.id"))
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
 
-    recorded_at = models.DateTimeField(default=timezone.now)
+# ========== VITAL STATS ==========
+class VitalStat(Base):
+    __tablename__ = "vital_stats"
 
-    def __str__(self):
-        return f"Vitals for {self.patient.name} at {self.recorded_at.strftime('%Y-%m-%d %H:%M')}"
+    id = Column(Integer, primary_key=True)
+    temperature = Column(Integer)
+    heart_rate = Column(Integer)
+    blood_pressure_systolic = Column(Integer)
+    blood_pressure_diastolic = Column(Integer)
+    respiratory_rate = Column(Integer)
+    recorded_at = Column(DateTime, default=datetime.utcnow)
+
+    patient_id = Column(Integer, ForeignKey("patients.id"))
+    doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=True)
+    appointment_id = Column(Integer, ForeignKey("appointments.id"), nullable=True)
+
+    patient = relationship("Patient", backref="vital_stats")
